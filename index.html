@@ -2045,8 +2045,31 @@ try{
   }
   window.__checkIsRealAdmin = checkIsRealAdmin;
 
+  /* البريد المعتمد للترقية التلقائية لحساب الأدمن. لو المستخدم اللي سجّل
+     دخول ببريده الحقيقي (مش Anonymous) بيطابق البريد ده، بننشئ/نحدّث
+     مستند admins/{uid} بيه تلقائيًا برتبة admin، عشان محدش محتاج يدخل
+     Firebase Console يدويًا كل مرة. قواعد Firestore هي اللي بتتأكد فعليًا
+     إن الكتابة دي مسموحة بس لو auth.token.email == نفس البريد. */
+  const APPROVED_ADMIN_EMAIL = 'kingaegypt@gmail.com';
+
+  async function autoPromoteApprovedAdmin(user){
+    if(!user || user.isAnonymous || !user.email) return;
+    if(user.email.toLowerCase() !== APPROVED_ADMIN_EMAIL.toLowerCase()) return;
+    try{
+      await db.collection('admins').doc(user.uid).set({
+        role: 'admin',
+        email: user.email,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    }catch(e){
+      console.error('تعذّر ترقية حساب الأدمن المعتمد تلقائيًا:', e);
+    }
+  }
+  window.__autoPromoteApprovedAdmin = autoPromoteApprovedAdmin;
+
   auth.onAuthStateChanged(async function(user){
     window.__uid = user ? user.uid : null;
+    await autoPromoteApprovedAdmin(user);
     const isRealAdmin = await checkIsRealAdmin(user);
     window.__isAdmin = isRealAdmin;
     window.__adminEmail = isRealAdmin ? user.email : null;
