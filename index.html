@@ -1138,7 +1138,7 @@
     <h1 class="brand">خصو<span>مات</span></h1>
     <div style="display:flex; align-items:center; gap:8px;">
       <button class="admin-btn notif-btn" id="notifOpenBtn">🔔<span id="notifBadge" class="notif-badge"></span></button>
-      <button class="admin-btn" id="adminOpenBtn">🔒 لوحة التحكم</button>
+      <button class="admin-btn" id="adminOpenBtn" onclick="handleAdminBtnClick()">🔒 لوحة التحكم</button>
     </div>
   </div>
   <p class="tagline">شارك و اكتشف أفضل العروض من حولك</p>
@@ -1598,15 +1598,11 @@
 </div>
 
 <!-- Admin modal -->
-<div class="overlay hidden" id="adminOverlay">
+<div class="overlay hidden" id="adminPanelModal">
   <div class="modal">
     <h2>لوحة التحكم <button id="closeAdminBtn">✕</button></h2>
     <div id="adminLoginView">
       <div id="adminMsg"></div>
-      <div class="field">
-        <label>البريد الإلكتروني</label>
-        <input type="email" id="adminEmail" placeholder="admin@example.com" autocomplete="username">
-      </div>
       <div class="field">
         <label>كلمة المرور</label>
         <input type="password" id="adminPassword" placeholder="••••••" autocomplete="current-password">
@@ -1793,6 +1789,11 @@
         <div id="adminReactivationList"></div>
       </div>
       <div class="admin-section">
+        <h4>📲 طلبات استخدام الكود من جهاز جديد</h4>
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">كل كود بيتقفل على أول جهاز استُخدم فيه. لو حد حاول يستخدمه من جهاز تاني (سواء صاحب الكود الأصلي غيّر تليفونه أو حد تاني معاه الكود)، الطلب هيظهر هنا ومش هيشتغل غير بعد موافقتك.</p>
+        <div id="adminDeviceRequestsList"></div>
+      </div>
+      <div class="admin-section">
         <h4>📱 طلبات تغيير رقم الهاتف</h4>
         <div id="adminEditShopList"></div>
       </div>
@@ -1818,7 +1819,6 @@
 <!-- ---------- Firebase (Firestore) كخلفية تخزين حقيقية مشتركة بين كل المستخدمين ---------- -->
 <script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-auth-compat.js"></script>
 <script>
 /*
  * بنستخدم نسخة "compat" (القديمة على شكل firebase.xxx) بدل ES modules عشان
@@ -2015,75 +2015,57 @@ async function deleteItemImageIfUnused(item){
   await deleteMediaFromStorage(item.image);
 }
 
-/* ---------- Firebase Authentication لحساب الأدمن فقط ----------
- * بدل ما نقارن كلمة سر مكتوبة في الكود (تظهر لأي حد يعمل "View Source")،
- * دلوقتي بنستخدم تسجيل دخول حقيقي (Email/Password) عن طريق Firebase Auth.
- * الحساب بتاع الأدمن اتعمل يدويًا من Firebase Console (Authentication -> Users)
- * ومفيش أي زرار "إنشاء حساب" في التطبيق نفسه، يعني محدش يقدر يسجّل حساب جديد
- * لوحده. لو حد نجح يسجل دخول بحساب حقيقي متعمول في Firebase، ده معناه إنه
- * فعلاً عنده بيانات الدخول الصحيحة، مش بس عارف نص ثابت جوه الجافاسكريبت.
+/* ---------- دخول الأدمن المحلي (بدون Firebase Auth) ----------
+ * اتلغى الاعتماد على Firebase Authentication (firebase.auth() /
+ * onAuthStateChanged) نهائيًا. دخول الأدمن بقى بيتم محليًا في المتصفح فقط:
+ * بنقارن هاش SHA-256 لكلمة السر اللي المستخدم بيكتبها بقيمة ثابتة مخزّنة
+ * جوه الكود (STORED_HASH). لو الهاش متطابق، بنفتح لوحة التحكم ونحفظ حالة
+ * الجلسة في sessionStorage عشان تفضل مفتوحة لحد ما التاب يتقفل.
  *
- * ده في try/catch منفصل عن Firestore عمدًا: لو حصلت مشكلة في تحميل خدمة
- * تسجيل الدخول (مثلاً مانع إعلانات شكّاك حاجب سكريبت الـ auth)، العملاء
- * العاديين يقدروا يستمروا يتصفحوا العروض عادي (Firestore شغال)، وبس لوحة
- * تحكم الأدمن هي اللي مش هتشتغل لحد ما المشكلة تتحل.
+ * ملحوظة أمان مهمة: التحقق ده كله في المتصفح (client-side) وبس، مفيش أي
+ * تحقق حقيقي على السيرفر بعد كده يربط عمليات الكتابة على Firestore بهوية
+ * "أدمن" موثوقة. يعني لازم قواعد Firestore (firestore.rules) تتفتح للسماح
+ * بعمليات القراءة/الكتابة العادية من غير تسجيل دخول حقيقي، وده معناه عمليًا
+ * إن أي حد يعرف يفتح "أدوات المطوّر" ويكلم Firestore مباشرة (من غير ما يمر
+ * على شاشة دخول الأدمن خالص) يقدر يعدّل/يحذف البيانات لو عرف اسم الكوليكشن
+ * والحقول. الحماية دلوقتي بقت مبنية على "التعتيم" (السيرفر مش بيتحقق من حد)
+ * مش على تحقق حقيقي، فده تنازل أمان واعي مقابل السهولة والتخلص من Firebase
+ * Auth بالكامل.
  */
-try{
-  const auth = firebase.auth();
-  window.__auth = auth;
-  window.__uid = null;
+const STORED_HASH = "17d780c6443b5a3b9917f6d493984d752fa509ea92163d5215d32caada9f6827";
+const ADMIN_SESSION_KEY = 'khsoumat_admin_session';
 
-  /* التحقق الحقيقي من صلاحية الأدمن: لازم يكون فيه مستند admins/{uid} برتبة
-     admin، مش مجرد "أي مستخدم مسجّل دخول" — وده أهم لما بقى كل الزوار
-     (حتى العاديين) بيسجلوا دخول Anonymous تلقائيًا تحت. */
-  async function checkIsRealAdmin(user){
-    if(!user || user.isAnonymous) return false;
-    try{
-      const adminDoc = await db.collection('admins').doc(user.uid).get();
-      return adminDoc.exists && adminDoc.data().role === 'admin';
-    }catch(e){ return false; }
+/* بيحسب هاش SHA-256 (Hex) لنص باستخدام Web Crypto API المدمج في المتصفح */
+async function sha256Hex(text){
+  const enc = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* بيتحقق من كلمة سر الأدمن محليًا بمقارنة هاش SHA-256 بتاعها بـ STORED_HASH */
+async function verifyAdminPassword(password){
+  if(!password) return false;
+  try{
+    const hash = await sha256Hex(password);
+    return hash === STORED_HASH;
+  }catch(e){
+    console.error('تعذّر حساب هاش كلمة السر:', e);
+    return false;
   }
-  window.__checkIsRealAdmin = checkIsRealAdmin;
+}
+window.__verifyAdminPassword = verifyAdminPassword;
 
-  /* البريد المعتمد للترقية التلقائية لحساب الأدمن. لو المستخدم اللي سجّل
-     دخول ببريده الحقيقي (مش Anonymous) بيطابق البريد ده، بننشئ/نحدّث
-     مستند admins/{uid} بيه تلقائيًا برتبة admin، عشان محدش محتاج يدخل
-     Firebase Console يدويًا كل مرة. قواعد Firestore هي اللي بتتأكد فعليًا
-     إن الكتابة دي مسموحة بس لو auth.token.email == نفس البريد. */
-  const APPROVED_ADMIN_EMAIL = 'kingaegypt@gmail.com';
+/* بيحفظ/بيمسح علامة جلسة الأدمن في sessionStorage (تختفي تلقائيًا لما التاب يتقفل) */
+function setAdminSession(active){
+  try{
+    if(active){ sessionStorage.setItem(ADMIN_SESSION_KEY, '1'); }
+    else{ sessionStorage.removeItem(ADMIN_SESSION_KEY); }
+  }catch(e){ /* لو sessionStorage مش متاح (خصوصية متصفح صارمة)، نتجاهل بهدوء */ }
+}
 
-  async function autoPromoteApprovedAdmin(user){
-    if(!user || user.isAnonymous || !user.email) return;
-    if(user.email.toLowerCase() !== APPROVED_ADMIN_EMAIL.toLowerCase()) return;
-    try{
-      await db.collection('admins').doc(user.uid).set({
-        role: 'admin',
-        email: user.email,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-    }catch(e){
-      console.error('تعذّر ترقية حساب الأدمن المعتمد تلقائيًا:', e);
-    }
-  }
-  window.__autoPromoteApprovedAdmin = autoPromoteApprovedAdmin;
-
-  auth.onAuthStateChanged(async function(user){
-    window.__uid = user ? user.uid : null;
-    await autoPromoteApprovedAdmin(user);
-    const isRealAdmin = await checkIsRealAdmin(user);
-    window.__isAdmin = isRealAdmin;
-    window.__adminEmail = isRealAdmin ? user.email : null;
-    if(typeof onAdminAuthReady === 'function'){ onAdminAuthReady(isRealAdmin ? user : null); }
-  });
-
-  /* تسجيل دخول مجهول (Anonymous) تلقائي لكل زائر، من غير أي واجهة أو تأثير
-     ملموس على تجربة الاستخدام. الهدف: يبقى لكل صاحب منشأة/عميل هوية (uid)
-     ثابتة على جهازه، يقدر السيرفر (قواعد Firestore) يتحقق بيها فعليًا إنه
-     هو نفسه اللي نشر عرض معيّن وقت الحذف/التعديل، بدل الاعتماد الكامل على
-     "كود" نصي وحده (اللي أي حد ممكن يبعته زي ما هو). */
-  auth.signInAnonymously().catch(function(e){ console.error('تعذر تسجيل الدخول المجهول:', e); });
-}catch(e){
-  console.error('تعذّر تهيئة Firebase Authentication، لوحة تحكم الأدمن لن تعمل حتى تُحل المشكلة:', e);
+function hasStoredAdminSession(){
+  try{ return sessionStorage.getItem(ADMIN_SESSION_KEY) === '1'; }
+  catch(e){ return false; }
 }
 </script>
 
@@ -2142,6 +2124,7 @@ let itemFetchFailedIds = new Set();
 let codes = [];
 let codeMap = new Map();
 let reactivationRequests = [];
+let deviceRequests = [];
 let codeRequests = [];
 let myCode = null;
 let editingItemId = null;
@@ -4892,8 +4875,9 @@ function toDatetimeLocalValue(ts){
 }
 
 function canManageItem(item){
-  const uid = (window.__auth && window.__auth.currentUser) ? window.__auth.currentUser.uid : null;
-  return !!(window.__isAdmin || (myCode && item && item.code === myCode) || (uid && item && item.ownerUid && item.ownerUid === uid));
+  /* اتشال الاعتماد على uid بتاع Firebase Auth (اتلغى نهائيًا). إدارة العرض
+     بقت بس للأدمن (دخول محلي مشفّر) أو لصاحب الكود المطابق المحفوظ محليًا. */
+  return !!(window.__isAdmin || (myCode && item && item.code === myCode));
 }
 
 /* لو الأدمن هو اللي عدّل عرض شخص تاني، نسجّل علامة مشتركة (shared) عشان جهاز صاحب العرض الأصلي
@@ -5242,7 +5226,32 @@ $('submitAddBtn').addEventListener('click', withLoading(async ()=>{
     return;
   }
 
+  /* ---- قفل الكود على جهاز واحد: أول جهاز يستخدم الكود بيتربط بيه تلقائيًا،
+     وأي جهاز تاني يحاول يستخدم نفس الكود بعد كده لازم يستنى موافقة الإدارة الأول ---- */
+  if(!myDeviceId) await ensureDeviceId();
+  if(codeData.deviceId && codeData.deviceId !== myDeviceId){
+    const existingReq = await safeGet('device_request:' + code, true);
+    if(!existingReq){
+      await safeSet('device_request:' + code, JSON.stringify({
+        requestedDeviceId: myDeviceId,
+        requestedAt: Date.now(),
+        requesterName: username
+      }), true);
+    }
+    await safeSet('pendingDeviceCode', code, false);
+    msgBox.innerHTML = '<div class="msg info">هذا الكود مسجّل بالفعل على جهاز آخر. تم إرسال طلب للإدارة للموافقة على استخدامه من هذا الجهاز، وهيوصلك إشعار فور الموافقة.</div>';
+    return;
+  }
+  if(!codeData.deviceId){
+    codeData = { ...codeData, deviceId: myDeviceId };
+    await safeSet('code:' + code, JSON.stringify(codeData), true);
+    codeMap.set(code, codeData);
+    const cEntry = codes.find(c => c.code === code);
+    if(cEntry) cEntry.deviceId = myDeviceId;
+  }
+
   await safeSet('mycode', code, false);
+  await safeDelete('pendingDeviceCode', false);
   myCode = code;
   renderPriorityBanner();
 
@@ -5253,7 +5262,8 @@ $('submitAddBtn').addEventListener('click', withLoading(async ()=>{
   }
 
   const createdItems = [];
-  const ownerUid = (window.__auth && window.__auth.currentUser) ? window.__auth.currentUser.uid : null;
+  /* اتشال الاعتماد على uid بتاع Firebase Auth (اتلغى نهائيًا)، فملوش قيمة دلوقتي */
+  const ownerUid = null;
   const groupId = selectedBranches.length > 1
     ? (Date.now().toString(36) + Math.random().toString(36).slice(2,7))
     : null;
@@ -6234,6 +6244,73 @@ async function loadReactivationRequests(){
   }).filter(Boolean);
 }
 
+/* ---------- device change requests (طلبات استخدام كود من جهاز جديد) ---------- */
+async function loadDeviceRequests(){
+  const listRes = await safeList('device_request:', true);
+  const keys = listRes && listRes.keys ? listRes.keys : [];
+  const results = await Promise.all(keys.map(k => safeGet(k, true)));
+  deviceRequests = keys.map((k,i) => {
+    let data = null;
+    try{ data = JSON.parse(results[i]); }catch(e){}
+    return data ? { code: k.replace('device_request:',''), ...data } : null;
+  }).filter(Boolean);
+  deviceRequests.sort((a,b)=> (b.requestedAt||0) - (a.requestedAt||0));
+}
+
+function renderAdminDeviceRequests(){
+  const box = $('adminDeviceRequestsList');
+  if(!box) return;
+  if(deviceRequests.length === 0){
+    box.innerHTML = '<p style="font-size:13px;color:var(--ink-soft);">لا يوجد طلبات استخدام كود من جهاز جديد حاليًا.</p>';
+    return;
+  }
+  box.innerHTML = '';
+  deviceRequests.forEach(r=>{
+    const codeInfo = codeMap.get(r.code);
+    const row = document.createElement('div');
+    row.className = 'admin-row';
+    row.style.flexDirection = 'column';
+    row.style.alignItems = 'flex-start';
+    row.style.gap = '6px';
+    row.innerHTML = `
+      <div style="font-size:12px;">
+        <div><span style="font-family:monospace;font-weight:700;">${escapeHtml(r.code)}</span> — ${escapeHtml(codeInfo ? (codeInfo.label || 'بدون اسم') : 'كود غير موجود')}${codeInfo && codeInfo.location ? ' — ' + escapeHtml(codeInfo.location) : ''}</div>
+        <div>الاسم اللي كتبه وقت الطلب: <strong>${escapeHtml(r.requesterName || '—')}</strong></div>
+        <div>وقت الطلب: ${formatDateTime(r.requestedAt)}</div>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button class="active" data-act="approve">موافقة وربط الجهاز الجديد</button>
+        <button class="banned" data-act="reject">رفض الطلب</button>
+      </div>
+    `;
+    row.querySelector('[data-act="approve"]').addEventListener('click', withLoading(async ()=>{
+      const confirmed = await customConfirm('هل أنت متأكد من الموافقة على استخدام هذا الكود من الجهاز الجديد؟ هيتوقف استخدامه من الجهاز القديم.');
+      if(!confirmed) return;
+      if(codeInfo){
+        const updated = { ...codeInfo, deviceId: r.requestedDeviceId };
+        await safeSet('code:' + r.code, JSON.stringify(updated), true);
+        codeMap.set(r.code, updated);
+        const c = codes.find(c => c.code === r.code);
+        if(c) c.deviceId = r.requestedDeviceId;
+      }
+      await safeDelete('device_request:' + r.code, true);
+      deviceRequests = deviceRequests.filter(x => x.code !== r.code);
+      renderAdminDeviceRequests();
+      renderAdminCodes();
+      showToast('تمت الموافقة، الجهاز الجديد هيتفعّل عنده أوتوماتيك');
+    }));
+    row.querySelector('[data-act="reject"]').addEventListener('click', withLoading(async ()=>{
+      const confirmed = await customConfirm('هل أنت متأكد من رفض هذا الطلب؟');
+      if(!confirmed) return;
+      await safeDelete('device_request:' + r.code, true);
+      deviceRequests = deviceRequests.filter(x => x.code !== r.code);
+      renderAdminDeviceRequests();
+      showToast('تم رفض الطلب');
+    }));
+    box.appendChild(row);
+  });
+}
+
 function renderAdminReactivations(){
   const box = $('adminReactivationList');
   if(reactivationRequests.length === 0){
@@ -6444,7 +6521,10 @@ function renderAdminComplaints(){
 }
 
 /* ---------- admin ---------- */
-window.__isAdmin = false;
+/* لو فيه جلسة أدمن محفوظة من قبل في sessionStorage (نفس التاب لسه مفتوح)،
+   بنستعيدها على طول عند تحميل الصفحة عشان أجزاء الواجهة الخاصة بالأدمن
+   (زي renderAdminItems) تشتغل صح من غير ما ننتظر فتح لوحة التحكم يدويًا. */
+window.__isAdmin = (typeof hasStoredAdminSession === 'function') ? hasStoredAdminSession() : false;
 
 /* بيعرض واجهة لوحة التحكم (تبديل الشاشات + الفورمات) - جزء متزامن بسيط */
 function showAdminPanelUI(){
@@ -6460,6 +6540,7 @@ async function loadAdminPanelData(){
   $('adminPanelView').insertAdjacentHTML('afterbegin', '<div id="adminLoadingState" class="loading-state">جارِ تحميل بيانات لوحة التحكم...</div>');
   await Promise.all([
     loadReactivationRequests(),
+    loadDeviceRequests(),
     loadEditShopRequests(),
     loadCodeRequests(),
     loadCodeRetrievalRequests(),
@@ -6474,6 +6555,7 @@ async function loadAdminPanelData(){
   loadUsageStats();
   renderAdminCodes();
   renderAdminReactivations();
+  renderAdminDeviceRequests();
   renderAdminEditShopRequests();
   renderAdminItems();
   renderAdminCodeRequests();
@@ -6484,23 +6566,6 @@ async function loadAdminPanelData(){
   renderAdminComplaints();
   renderAdminDeleteLogs();
   applyFilter();
-}
-
-/* بتتنادى تلقائيًا من Firebase Auth (onAuthStateChanged) لما حالة تسجيل الدخول تتحدد،
-   سواء أول ما التطبيق يفتح (لو فيه جلسة محفوظة من قبل) أو بعد تسجيل خروج. */
-function onAdminAuthReady(user){
-  if(user){
-    // لو لوحة التحكم مفتوحة وواقفة على شاشة الدخول (مثلاً جلسة سابقة اترجعت تلقائيًا)، بدّل على طول لواجهة اللوحة
-    if(!$('adminOverlay').classList.contains('hidden') && !$('adminLoginView').classList.contains('hidden')){
-      showAdminPanelUI();
-      loadAdminPanelData();
-    }
-  } else {
-    // اتسجل خروج (أو مفيش جلسة أصلاً): ارجع لشاشة الدخول واقفل اللوحة لو كانت متفتحة
-    $('adminPanelView').classList.add('hidden');
-    $('adminLoginView').classList.remove('hidden');
-    $('adminPassword').value = '';
-  }
 }
 
 $('adminShowEngagementCounts').addEventListener('change', async (e)=>{
@@ -6525,69 +6590,56 @@ $('adminShowViewCounts').addEventListener('change', async (e)=>{
   }
 });
 
-$('adminOpenBtn').addEventListener('click', ()=>{
+/* بتتنادى من زرار الأدمن الرئيسي في الهيدر. لو فيه جلسة أدمن محفوظة في
+   sessionStorage من قبل (نفس التاب)، بتفتح لوحة التحكم على طول من غير ما
+   تطلب كلمة السر تاني؛ غير كده بتفتح شاشة الدخول. */
+function handleAdminBtnClick(){
   $('adminMsg').innerHTML = '';
-  $('adminOverlay').classList.remove('hidden');
-  if(window.__isAdmin){
+  $('adminPanelModal').classList.remove('hidden');
+  if(window.__isAdmin || hasStoredAdminSession()){
+    window.__isAdmin = true;
     showAdminPanelUI();
     loadAdminPanelData();
+  } else {
+    $('adminPanelView').classList.add('hidden');
+    $('adminLoginView').classList.remove('hidden');
   }
-});
-$('closeAdminBtn').addEventListener('click', ()=> $('adminOverlay').classList.add('hidden'));
-$('adminOverlay').addEventListener('click', (e)=>{ if(e.target.id==='adminOverlay') $('adminOverlay').classList.add('hidden'); });
+}
+window.handleAdminBtnClick = handleAdminBtnClick;
 
-/* تسجيل الدخول دلوقتي بيتم فعليًا عن طريق Firebase Authentication (Email/Password)،
-   مش بمقارنة كلمة سر مكتوبة في الكود. لازم تنشئ حساب الأدمن مرة واحدة يدويًا من
-   Firebase Console -> Authentication -> Users -> Add user، وتفعّل طريقة الدخول
-   "Email/Password" من تبويب Sign-in method. مفيش أي طريقة في التطبيق نفسه لإنشاء
-   حساب جديد، فمحدش غير اللي عنده بيانات الدخول دي يقدر يدخل كأدمن. */
+$('closeAdminBtn').addEventListener('click', ()=> $('adminPanelModal').classList.add('hidden'));
+$('adminPanelModal').addEventListener('click', (e)=>{ if(e.target.id==='adminPanelModal') $('adminPanelModal').classList.add('hidden'); });
+
+/* تسجيل دخول الأدمن دلوقتي محلي بالكامل: بنحسب هاش SHA-256 لكلمة السر
+   المكتوبة ونقارنه بـ STORED_HASH. لو اتطابق، بنفتح لوحة التحكم (#adminPanelModal)
+   ونحفظ حالة الجلسة في sessionStorage. مفيش أي اتصال بـ Firebase Auth هنا خالص. */
 $('adminLoginBtn').addEventListener('click', withLoading(async ()=>{
-  const email = ($('adminEmail').value || '').trim();
   const pass = $('adminPassword').value;
   $('adminMsg').innerHTML = '';
-  if(!email || !pass){
-    $('adminMsg').innerHTML = '<div class="msg error">اكتب البريد الإلكتروني وكلمة المرور.</div>';
+  if(!pass){
+    $('adminMsg').innerHTML = '<div class="msg error">اكتب كلمة المرور.</div>';
     return;
   }
-  if(!window.__auth){
-    $('adminMsg').innerHTML = '<div class="msg error">تعذّر الاتصال بخدمة تسجيل الدخول. جرّب تاني وأنت متصل بالإنترنت.</div>';
+  const ok = await verifyAdminPassword(pass);
+  if(!ok){
+    $('adminMsg').innerHTML = '<div class="msg error">كلمة المرور غلط.</div>';
+    $('adminPassword').value = '';
     return;
   }
-  try{
-    await window.__auth.signInWithEmailAndPassword(email, pass);
-    const u = window.__auth.currentUser;
-    const isRealAdmin = window.__checkIsRealAdmin ? await window.__checkIsRealAdmin(u) : false;
-    if(!isRealAdmin){
-      await window.__auth.signOut();
-      $('adminMsg').innerHTML = '<div class="msg error">هذا الحساب مسجّل في Firebase Auth لكن ملوش صلاحية أدمن (مفيش مستند admins/' + '{uid}' + ' برتبة admin). راجع Firebase Console.</div>';
-      return;
-    }
-    // بنحدّث الحالة هنا على طول (بدل ما ننتظر onAuthStateChanged) عشان نعرض اللوحة فورًا
-    window.__isAdmin = true;
-    window.__adminEmail = u.email;
-    showAdminPanelUI();
-    await loadAdminPanelData();
-  } catch(err){
-    let msg = 'تعذّر تسجيل الدخول. تأكد من البريد الإلكتروني وكلمة المرور.';
-    if(err && (err.code === 'auth/too-many-requests')){
-      msg = 'محاولات كتير غلط. استنى شوية وجرّب تاني.';
-    } else if(err && (err.code === 'auth/network-request-failed')){
-      msg = 'مشكلة في الاتصال بالإنترنت. جرّب تاني.';
-    }
-    $('adminMsg').innerHTML = '<div class="msg error">' + msg + '</div>';
-  }
+  window.__isAdmin = true;
+  setAdminSession(true);
+  $('adminPassword').value = '';
+  showAdminPanelUI();
+  await loadAdminPanelData();
 }));
 
 $('adminLogoutBtn').addEventListener('click', withLoading(async ()=>{
-  if(window.__auth){
-    await window.__auth.signOut();
-    /* بعد خروج الأدمن، نرجّع تسجيل دخول مجهول للجهاز عشان لو صاحب المحل بيستخدم
-       نفس الجهاز يفضل عنده uid صالح لإدارة عروضه */
-    window.__auth.signInAnonymously().catch(()=>{});
-  }
-  $('adminEmail').value = '';
+  window.__isAdmin = false;
+  setAdminSession(false);
   $('adminPassword').value = '';
-  $('adminOverlay').classList.add('hidden');
+  $('adminPanelView').classList.add('hidden');
+  $('adminLoginView').classList.remove('hidden');
+  $('adminPanelModal').classList.add('hidden');
   showToast('تم تسجيل الخروج');
 }));
 
@@ -6705,6 +6757,23 @@ async function toggleCode(code){
   showToast(entry.active ? 'تم إرجاع صاحب المكان للمنصة، عروضه هتظهر تاني' : 'تم إيقاف الكود مؤقتًا، عروضه اختفت من الجميع لحد ما يتفعّل تاني');
 }
 
+/* بتفك ربط الكود بالجهاز المسجّل عليه، عشان يقدر أي جهاز (الجهاز القديم أو جهاز جديد) يستخدمه
+   تاني من غير ما يحتاج يبعت طلب موافقة (مفيد لو صاحب المكان ضاع منه جهازه القديم مثلاً) */
+async function unlinkCodeDevice(code){
+  const entry = codes.find(c => c.code === code);
+  if(!entry || !entry.deviceId) return;
+  const confirmed = await customConfirm('هل أنت متأكد من فك ربط هذا الكود بالجهاز الحالي؟ أول جهاز يستخدم الكود بعد كده هيتربط بيه تلقائيًا من غير ما يحتاج موافقتك.');
+  if(!confirmed) return;
+  const dataToSave = { ...entry };
+  delete dataToSave.code;
+  delete dataToSave.deviceId;
+  await safeSet('code:' + code, JSON.stringify(dataToSave), true);
+  delete entry.deviceId;
+  codeMap.set(code, entry);
+  renderAdminCodes();
+  showToast('تم فك ربط الكود بالجهاز');
+}
+
 async function deleteCodePermanently(code){
   const confirmed = await customConfirm('هل أنت متأكد؟ الحذف النهائي لا يمكن التراجع عنه، ولازم تولّد كود جديد لو حبيت تسمح لنفس الشخص بالنشر تاني.');
   if(!confirmed) return;
@@ -6735,15 +6804,19 @@ function renderAdminCodes(){
           <span style="font-family:monospace; font-weight:700;">${escapeHtml(c.code)}</span>
           <span style="font-size:11px; color:var(--ink-soft);">${escapeHtml(c.label || 'بدون اسم')} — ${escapeHtml(c.location || 'بدون مكان')}${c.locationAddress ? ' — ' + escapeHtml(c.locationAddress) : ''} ${c.active ? '' : '— متوقف مؤقتًا'}</span>
           <span style="font-size:11px; color:var(--ink-soft);">📞 ${escapeHtml(c.phone || 'بدون رقم')}</span>
+          <span style="font-size:11px; color:var(--ink-soft);">${c.deviceId ? '📱 مربوط بجهاز' : '📭 مش مربوط بأي جهاز لسه'}</span>
         </span>
       </span>
       <span style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
         <button class="${c.active ? 'active' : 'banned'}" data-act="toggle">${c.active ? 'إيقاف مؤقت' : 'إعادة تفعيل'}</button>
+        ${c.deviceId ? '<button data-act="unlink" style="border-color:var(--ink-soft); color:var(--ink-soft);">فك الربط بالجهاز</button>' : ''}
         <button class="banned" data-act="delete" style="border-color:var(--ink-soft); color:var(--ink-soft);">حذف نهائي</button>
       </span>
     `;
     row.querySelector('[data-act="toggle"]').addEventListener('click', ()=> toggleCode(c.code));
     row.querySelector('[data-act="delete"]').addEventListener('click', ()=> deleteCodePermanently(c.code));
+    const unlinkBtn = row.querySelector('[data-act="unlink"]');
+    if(unlinkBtn) unlinkBtn.addEventListener('click', withLoading(async ()=> unlinkCodeDevice(c.code)));
     box.appendChild(row);
   });
 }
@@ -6782,6 +6855,7 @@ $('refreshBtn').addEventListener('click', withLoading(async ()=>{
   await loadCodes();
   const adminLoads = window.__isAdmin ? [
     loadReactivationRequests(),
+    loadDeviceRequests(),
     loadEditShopRequests(),
     loadCodeRequests(),
     loadCodeRetrievalRequests(),
@@ -6790,7 +6864,7 @@ $('refreshBtn').addEventListener('click', withLoading(async ()=>{
     loadComplaints()
   ] : [];
   await Promise.all([loadItems(), loadAds(), ...adminLoads]);
-  if(window.__isAdmin){ loadUsageStats(); renderAdminCodes(); renderAdminReactivations(); renderAdminEditShopRequests(); renderAdminItems(); renderAdminCodeRequests(); renderAdminAdsList(); renderAdminRetrievalRequests(); renderAdminAdRequests(); renderAdminPriorityRequests(); renderAdminComplaints(); }
+  if(window.__isAdmin){ loadUsageStats(); renderAdminCodes(); renderAdminReactivations(); renderAdminDeviceRequests(); renderAdminEditShopRequests(); renderAdminItems(); renderAdminCodeRequests(); renderAdminAdsList(); renderAdminRetrievalRequests(); renderAdminAdRequests(); renderAdminPriorityRequests(); renderAdminComplaints(); }
   applyFilter();
   await pollNotifications();
   showToast('تم التحديث');
@@ -6831,7 +6905,7 @@ let inAppNotifications = [];
 let notifWatchPhone = null;
 let notificationsOSEnabled = false;
 let notifSeenMap = {};
-let notifAdminSeen = { codeRequest:0, retrieval:0, forgot:0, reactivation:0, adRequest:0, priorityRequest:0, complaint:0 };
+let notifAdminSeen = { codeRequest:0, retrieval:0, forgot:0, reactivation:0, deviceRequest:0, adRequest:0, priorityRequest:0, complaint:0 };
 
 async function loadNotifState(){
   notifWatchPhone = (await pGet('notif_watch_phone')) || null;
@@ -7020,6 +7094,7 @@ async function checkAdminNotifications(){
     { list: codeRetrievalRequests, key:'retrieval', label:'طلب استلام كود جديد', body:r=>r.phone||'' },
     { list: editShopRequests, key:'editShop', label:'طلب تغيير رقم هاتف جديد', body:r=>r.code||'' },
     { list: reactivationRequests, key:'reactivation', label:'طلب إعادة تفعيل جديد', body:r=>r.location||r.code||'' },
+    { list: deviceRequests, key:'deviceRequest', label:'📲 طلب استخدام كود من جهاز جديد', body:r=>`${r.requesterName||''} — كود ${r.code||''}` },
     { list: adRequests, key:'adRequest', label:'طلب إعلان جديد', body:r=>r.phone||'' },
     { list: priorityRequests, key:'priorityRequest', label:'طلب أولوية ظهور جديد', body:r=>r.phone||'' },
     { list: complaints, key:'complaint', label:'شكوى عميل جديدة', body:r=>`${r.shopName||''} — ${r.branch||''}` },
@@ -7044,7 +7119,7 @@ async function checkAdminNotifications(){
 async function ensureNotifAdminBaseline(){
   const done = await pGet('notif_admin_baseline_init');
   if(done) return;
-  const lists = { codeRequest: codeRequests, retrieval: codeRetrievalRequests, editShop: editShopRequests, reactivation: reactivationRequests, adRequest: adRequests, priorityRequest: priorityRequests, complaint: complaints, deleteLog: deleteLogs };
+  const lists = { codeRequest: codeRequests, retrieval: codeRetrievalRequests, editShop: editShopRequests, reactivation: reactivationRequests, deviceRequest: deviceRequests, adRequest: adRequests, priorityRequest: priorityRequests, complaint: complaints, deleteLog: deleteLogs };
   for(const key in lists){
     const list = lists[key];
     if(list && list.length){
@@ -7192,6 +7267,38 @@ async function checkPriorityGrantNotifications(){
   );
 }
 
+/* فحص: هل الإدارة وافقت (أو رفضت) على طلب استخدام كودي من الجهاز الجديد ده؟ */
+async function checkDeviceApprovalNotifications(){
+  const pendingCode = await safeGet('pendingDeviceCode', false);
+  if(!pendingCode) return;
+  if(!myDeviceId) await ensureDeviceId();
+  const raw = await safeGet('code:' + pendingCode, true);
+  let data; try{ data = JSON.parse(raw); }catch(e){ data = null; }
+  if(!data) return; /* الكود اتحذف أو مشكلة مؤقتة، استنى المرة الجاية */
+  if(data.deviceId === myDeviceId){
+    await safeSet('mycode', pendingCode, false);
+    myCode = pendingCode;
+    codeMap.set(pendingCode, data);
+    await safeDelete('pendingDeviceCode', false);
+    renderPriorityBanner();
+    await addInAppNotification(
+      '✅ تم تفعيل الكود على هذا الجهاز',
+      'وافقت الإدارة على استخدام الكود من هذا الجهاز، تقدر تنشر عروضك دلوقتي.',
+      { type:'device_approved', tag:'device_approved_' + pendingCode }
+    );
+  } else if(data.deviceId && data.deviceId !== myDeviceId){
+    const reqRaw = await safeGet('device_request:' + pendingCode, true);
+    if(!reqRaw){
+      await safeDelete('pendingDeviceCode', false);
+      await addInAppNotification(
+        '❌ تم رفض طلب استخدام الجهاز الجديد',
+        'الإدارة رفضت تفعيل هذا الكود من هذا الجهاز.',
+        { type:'device_rejected', tag:'device_rejected_' + pendingCode + '_' + Date.now() }
+      );
+    }
+  }
+}
+
 async function pollNotifications(){
   try{
     await checkUserCodeNotifications();
@@ -7200,11 +7307,13 @@ async function pollNotifications(){
     await checkItemEditNotifications();
     await checkPriorityGrantNotifications();
     await checkSavedItemsNotifications();
+    await checkDeviceApprovalNotifications();
     if(window.__isAdmin){
       await loadCodeRequests();
       await loadCodeRetrievalRequests();
       await loadEditShopRequests();
       await loadReactivationRequests();
+      await loadDeviceRequests();
       await loadAdRequests();
       await loadPriorityRequests();
       await loadComplaints();
